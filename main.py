@@ -4,6 +4,8 @@ import os
 from urllib.parse import urlparse
 from typing import Dict, Any
 
+from NPMDependencyFetcher import NPMDependencyFetcher
+
 
 class DependencyGraphConfig:
 
@@ -60,7 +62,7 @@ class DependencyGraphConfig:
         if not version or not isinstance(version, str):
             return False
 
-        return any(c.isdigit() for c in version)
+        return len(version.strip()) > 0
 
     def to_dict(self) -> Dict[str, Any]:
 
@@ -145,8 +147,36 @@ def setup_config(args) -> DependencyGraphConfig:
     return config
 
 
+def fetch_and_display_dependencies(config: DependencyGraphConfig):
+
+    fetcher = NPMDependencyFetcher()
+
+    dependencies = fetcher.get_dependencies(config.package_name, config.package_version)
+
+
+    if config.filter_substring:
+        filtered_deps = {
+            name: version for name, version in dependencies.items()
+            if config.filter_substring.lower() in name.lower()
+        }
+        dependencies = filtered_deps
+
+    if dependencies:
+        print(f"\nStraight dependencies {config.package_name}:")
+        print("-" * 50)
+        for dep_name, dep_version in dependencies.items():
+            print(f"  {dep_name}: {dep_version}")
+        print(f"\nTotal dependencies: {len(dependencies)}")
+    else:
+        print(f"\nPAckage {config.package_name} not have dependencies or not found")
+
+    return dependencies
+
+
 def main():
+
     try:
+
         if sys.platform == "win32":
             import io
             sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
@@ -156,24 +186,27 @@ def main():
 
         config = setup_config(args)
 
+        # Валидация параметров
         if not config.validate():
-            print("Error in configuration:", file=sys.stderr)
+            print("Konfig error:", file=sys.stderr)
             for error in config.errors:
                 print(f"  - {error}", file=sys.stderr)
             sys.exit(1)
 
         config.display()
 
-        print("\nKonfig is sucessfully validated")
+        dependencies = fetch_and_display_dependencies(config)
+
+        print("\nExecuted sucessfuly")
 
     except argparse.ArgumentError as e:
-        print(f"Errorin CLI parameters: {e}", file=sys.stderr)
+        print(f"Error in cli arguments: {e}", file=sys.stderr)
         sys.exit(1)
     except KeyboardInterrupt:
-        print("\nInterrupted by user", file=sys.stderr)
+        print("\ninterrupted by user", file=sys.stderr)
         sys.exit(130)
     except Exception as e:
-        print(f"ERROR: {e}", file=sys.stderr)
+        print(f"Error: {e}", file=sys.stderr)
         sys.exit(1)
 
 
