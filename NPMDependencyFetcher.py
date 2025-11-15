@@ -42,30 +42,38 @@ class NPMDependencyFetcher:
             return None
 
     def extract_dependencies(self, package_info: Dict) -> Dict[str, str]:
-
+        """Извлечь зависимости из информации о пакете"""
         dependencies = {}
 
         try:
-
             version_data = None
-            if 'version' in package_info:
 
-                version_data = package_info
-            elif 'versions' in package_info and package_info.get('dist-tags', {}).get('latest'):
-
-                latest_version = package_info['dist-tags']['latest']
-                version_data = package_info['versions'].get(latest_version, {})
-            elif 'versions' in package_info and self.package_version:
-
+            # Если передан конкретный version, используем его
+            if self.package_version and 'versions' in package_info:
                 version_data = package_info['versions'].get(self.package_version, {})
 
-            if version_data:
+            # Если не нашли по конкретной версии или версия не указана, используем latest
+            if not version_data and 'dist-tags' in package_info and 'latest' in package_info['dist-tags']:
+                latest_version = package_info['dist-tags']['latest']
+                version_data = package_info['versions'].get(latest_version, {})
 
+            # Если всё еще нет данных, но есть поле 'version', используем корневой объект
+            if not version_data and 'version' in package_info:
+                version_data = package_info
+
+            # Если ничего не нашли, но есть versions, берем первую доступную версию
+            if not version_data and 'versions' in package_info and package_info['versions']:
+                first_version = next(iter(package_info['versions'].values()))
+                version_data = first_version
+
+            if version_data:
+                # Собираем все типы зависимостей
                 deps = version_data.get('dependencies', {})
                 dev_deps = version_data.get('devDependencies', {})
                 peer_deps = version_data.get('peerDependencies', {})
+                optional_deps = version_data.get('optionalDependencies', {})
 
-                all_deps = {**deps, **dev_deps, **peer_deps}
+                all_deps = {**deps, **dev_deps, **peer_deps, **optional_deps}
                 dependencies.update(all_deps)
 
         except Exception as e:

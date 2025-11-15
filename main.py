@@ -1,10 +1,13 @@
 import argparse
+import json
 import sys
 import os
+from collections import deque
 from urllib.parse import urlparse
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 from NPMDependencyFetcher import NPMDependencyFetcher
+from DependencyGrapf import DependencyGraph
 
 
 class DependencyGraphConfig:
@@ -17,6 +20,7 @@ class DependencyGraphConfig:
         self.package_version = None
         self.filter_substring = None
         self.errors = []
+        self.max_depth = 2
 
     def validate(self) -> bool:
 
@@ -72,7 +76,8 @@ class DependencyGraphConfig:
             'repository_path': self.repository_path,
             'test_mode': self.test_mode,
             'package_version': self.package_version,
-            'filter_substring': self.filter_substring
+            'filter_substring': self.filter_substring,
+            'max_depth': self.max_depth
         }
 
     def display(self):
@@ -130,6 +135,13 @@ Examples of using:
         help='substring for package filter'
     )
 
+    parser.add_argument(
+        '--max-depth',
+        type=int,
+        default=2,
+        help='maximum depth for dependency traversal (default: 2)'
+    )
+
     return parser.parse_args()
 
 
@@ -143,35 +155,197 @@ def setup_config(args) -> DependencyGraphConfig:
     config.test_mode = args.test_mode
     config.package_version = args.version
     config.filter_substring = args.filter_substring
+    config.max_depth = args.max_depth
 
     return config
 
 
 def fetch_and_display_dependencies(config: DependencyGraphConfig):
 
-    fetcher = NPMDependencyFetcher()
-
-    dependencies = fetcher.get_dependencies(config.package_name, config.package_version)
-
-
-    if config.filter_substring:
-        filtered_deps = {
-            name: version for name, version in dependencies.items()
-            if config.filter_substring.lower() in name.lower()
-        }
-        dependencies = filtered_deps
-
-    if dependencies:
-        print(f"\nStraight dependencies {config.package_name}:")
-        print("-" * 50)
-        for dep_name, dep_version in dependencies.items():
-            print(f"  {dep_name}: {dep_version}")
-        print(f"\nTotal dependencies: {len(dependencies)}")
+    # Режим тестирования с файлом
+    if config.test_mode and config.repository_path:
+        dependencies_data = load_test_dependencies(config.repository_path)
+        if not dependencies_data:
+            print(f"Unable to load dependencies {config.repository_path}")
+            return {}
     else:
-        print(f"\nPAckage {config.package_name} not have dependencies or not found")
+        # Режим работы с NPM реестром
+        fetcher = NPMDependencyFetcher()
+        dependencies_data = build_dependency_graph(fetcher, config.package_name, config.package_version,
+                                                   max_depth=config.max_depth)
 
-    return dependencies
+    if not dependencies_data:
+        print(f"Package {config.package_name} not have dependencies or not found")
+        return {}
 
+    # Строим граф и получаем транзитивные зависимости
+    graph = DependencyGraph()
+    for package, deps in dependencies_data.items():
+        graph.add_dependency(package, deps)
+
+    result = graph.get_transitive_dependencies(config.package_name, config.filter_substring)
+
+    # Отображаем результаты в виде дерева с ограничением глубины
+    display_dependency_results(config.package_name, result, config.filter_substring, config.max_depth)
+
+    return result
+
+
+def build_dependency_graph(fetcher: NPMDependencyFetcher, start_package: str, version: str = None,
+                           max_depth: int = 3) -> Dict[str, Dict[str, str]]:
+    graph = {}
+    visited = set()
+    queue = deque([(start_package, version, 0)])  # (package, version, depth)
+
+    while queue:
+        current_package, current_version, depth = queue.popleft()
+
+        if current_package in visited:
+            continue
+
+        visited.add(current_package)
+
+        # Ограничение глубины для больших графов
+        if depth >= max_depth:
+            graph[current_package] = {}
+            continue
+
+        # Получаем информацию о пакете
+        package_info = fetcher.get_package_info(current_package, current_version)
+        if not package_info:
+            graph[current_package] = {}
+            continue
+
+        # Извлекаем зависимости
+        dependencies = fetcher.extract_dependencies(package_info)
+        graph[current_package] = dependencies
+
+        # Добавляем зависимости в очередь для обработки
+        for dep_name, dep_version in dependencies.items():
+            if dep_name not in visited and dep_name not in [p[0] for p in queue]:
+                queue.append((dep_name, dep_version, depth + 1))
+
+    return graph
+
+
+def load_test_dependencies(file_path: str) -> Dict[str, Dict[str, str]]:
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        return data
+    except Exception as e:
+        print(f"Error loading test dependencies: {e}")
+        return {}
+
+
+def display_dependency_results(package_name: str, result: Dict[str, Any], filter_substring: str = None, max_depth: int = 10):
+
+    dependencies = result['dependencies']
+    cycles = result['cycles']
+
+    if not dependencies or len(dependencies) <= 1:
+        print(f"\nPackage {package_name} not have dependencies")
+        return
+
+    print(f"\nDependencies graph {package_name} (max depth: {max_depth}):")
+    print("=" * 50)
+
+    # Строим структуру дерева из графа с ограничением глубины
+    tree_structure = build_tree_structure(package_name, result, filter_substring, max_depth)
+
+    # Выводим дерево с ограничением глубины
+    print_tree(package_name, tree_structure, cycles, filter_substring, max_depth)
+
+    if filter_substring:
+        print(f"\nFilter: '{filter_substring}'")
+
+    if cycles:
+        print(f"\nCycles:")
+        for i, cycle in enumerate(cycles, 1):
+            print(f"  Cycle {i}: {' → '.join(cycle)}")
+
+
+def build_tree_structure(root: str, result: Dict[str, Any], filter_substring: str = None, max_level: int = 10) -> Dict[
+    str, List[str]]:
+
+    graph = result.get('graph', {})
+    tree = {}
+    visited_levels = {}
+
+    stack = [(root, 0)]
+
+    while stack:
+        current, level = stack.pop()
+
+        # Строгое ограничение глубины
+        if level >= max_level:
+            continue
+
+        if current not in tree:
+            tree[current] = []
+
+        if current in graph:
+            for child in graph[current]:
+                # Пропускаем отфильтрованные пакеты
+                if filter_substring and filter_substring.lower() in child.lower():
+                    continue
+
+                # Проверяем, не превышает ли добавление этого ребенка максимальный уровень
+                if child not in visited_levels or visited_levels[child] > level + 1:
+                    if child not in tree[current]:
+                        tree[current].append(child)
+                    visited_levels[child] = level + 1
+                    if level + 1 < max_level:  # строго меньше
+                        stack.append((child, level + 1))
+
+    return tree
+
+
+def print_tree(root: str, tree: Dict[str, List[str]], cycles: List[List[str]], filter_substring: str = None,
+               max_depth: int = 10):
+
+    def is_in_cycle(node, path):
+
+        for cycle in cycles:
+            if node in cycle and any(n in path for n in cycle):
+                return True
+        return False
+
+    stack = [(root, 0, [], [])]  # (node, depth, prefix_parts, path)
+
+    while stack:
+        current_node, depth, prefix_parts, path = stack.pop()
+
+        if filter_substring and filter_substring.lower() in current_node.lower():
+            continue
+
+        # Проверяем цикл
+        is_cycle_node = is_in_cycle(current_node, path)
+
+        # Строим префикс
+        if depth == 0:
+            print(current_node + (" CYCLE" if is_cycle_node else ""))
+        else:
+            prefix = ""
+            for i, part in enumerate(prefix_parts):
+                if i == len(prefix_parts) - 1:
+                    prefix += "└── " if part else "├── "
+                else:
+                    prefix += "    " if part else "│   "
+            print(f"{prefix}{current_node}" + (" CYCLE" if is_cycle_node else ""))
+
+        # Если достигли максимальной глубины или узел в цикле, не идем глубже
+        if depth >= max_depth or is_cycle_node:
+            continue
+
+        # Добавляем детей
+        if current_node in tree:
+            children = tree[current_node]
+            new_path = path + [current_node]
+
+            for i, child in enumerate(reversed(children)):
+                is_last = (i == 0)  # Поскольку переворачиваем
+                stack.append((child, depth + 1, prefix_parts + [is_last], new_path))
 
 def main():
 
