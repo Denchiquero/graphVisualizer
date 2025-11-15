@@ -65,4 +65,31 @@ display_dependency_results() - вывод результатов
 #### С ограничением глубины и фильтром
 `python main.py --package react --url https://registry.npmjs.org --max-depth 3 --filter "dev"`
 
+#### Пример
+
+```C:\Users\denis\OneDrive\Документы\Packages\.venv\Scripts\python.exe main.py --package A --path "C:\Users\denis\AppData\Local\Temp\tmpp8uhp062.json" --test-mode
+STDOUT:
+PARAMS KONFIGURATION
+package_name: A
+repository_url: None
+repository_path: C:\Users\denis\AppData\Local\Temp\tmpp8uhp062.json
+test_mode: True
+package_version: None
+filter_substring: None
+max_depth: 2
+
+Dependencies graph A (max depth: 2):
+
+A
+├── B
+│   └── E
+└── C
+    ├── D
+    └── F
+
+Executed sucessfuly
+
+Exit code: 0
+```
+
 Проект демонстрирует практики работы с графами, API вызовами и визуализацией древовидных структур в консоли
