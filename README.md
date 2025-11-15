@@ -67,7 +67,8 @@ display_dependency_results() - вывод результатов
 
 #### Пример
 
-```C:\Users\denis\OneDrive\Документы\Packages\.venv\Scripts\python.exe main.py --package A --path "C:\Users\denis\AppData\Local\Temp\tmpp8uhp062.json" --test-mode
+```
+C:\Users\denis\OneDrive\Документы\Packages\.venv\Scripts\python.exe main.py --package A --path "C:\Users\denis\AppData\Local\Temp\tmpp8uhp062.json" --test-mode
 STDOUT:
 PARAMS KONFIGURATION
 package_name: A
